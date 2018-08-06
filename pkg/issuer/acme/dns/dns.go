@@ -18,6 +18,7 @@ import (
 	"github.com/jetstack/cert-manager/pkg/issuer/acme/dns/azuredns"
 	"github.com/jetstack/cert-manager/pkg/issuer/acme/dns/clouddns"
 	"github.com/jetstack/cert-manager/pkg/issuer/acme/dns/cloudflare"
+	"github.com/jetstack/cert-manager/pkg/issuer/acme/dns/execute"
 	"github.com/jetstack/cert-manager/pkg/issuer/acme/dns/route53"
 	"github.com/jetstack/cert-manager/pkg/issuer/acme/dns/util"
 )
@@ -40,6 +41,7 @@ type dnsProviderConstructors struct {
 	cloudFlare func(email, apikey string) (*cloudflare.DNSProvider, error)
 	route53    func(accessKey, secretKey, hostedZoneID, region string, ambient bool) (*route53.DNSProvider, error)
 	azureDNS   func(clientID, clientSecret, subscriptionID, tenentID, resourceGroupName, hostedZoneName string) (*azuredns.DNSProvider, error)
+	execute    func(pluginName string, envSecret []string) (*execute.DNSProvider, error)
 }
 
 // Solver is a solver for the acme dns01 challenge.
@@ -239,6 +241,32 @@ func (s *Solver) solverForIssuerProvider(providerName string) (solver, error) {
 			providerConfig.AzureDNS.ResourceGroupName,
 			providerConfig.AzureDNS.HostedZoneName,
 		)
+	case providerConfig.Execute != nil:
+		clientSecret, err := s.secretLister.Secrets(s.resourceNamespace).Get(providerConfig.Execute.EnvSecret.Name)
+		if err != nil {
+			return nil, fmt.Errorf("error getting execute env secret: %s", err)
+		}
+
+		clientSecretMap := clientSecret.Data
+		if len(clientSecretMap) == 0 {
+			return nil, fmt.Errorf("error getting execute env secret '%s': data field is empty", clientSecret.Name)
+		}
+
+		// range over Secret map and create a []string of "k=v" elements
+		var clientSecretStrings []string
+		for k, v := range clientSecretMap {
+			clientSecretStrings = append(clientSecretStrings, fmt.Sprintf("%s=%s", k, v))
+		}
+
+		impl, err = s.dnsProviderConstructors.execute(
+			providerConfig.Execute.PluginName,
+			clientSecretStrings,
+		)
+
+		if err != nil {
+			return nil, fmt.Errorf("error instantiating execute challenge solver: %s", err)
+		}
+
 	default:
 		return nil, fmt.Errorf("no dns provider config specified for provider %q", providerName)
 	}
@@ -257,6 +285,7 @@ func NewSolver(issuer v1alpha1.GenericIssuer, client kubernetes.Interface, secre
 			cloudflare.NewDNSProviderCredentials,
 			route53.NewDNSProvider,
 			azuredns.NewDNSProviderCredentials,
+			execute.NewDNSProviderCredentials,
 		},
 		ambientCredentials,
 		dns01Nameservers,

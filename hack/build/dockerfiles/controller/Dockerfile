@@ -1,7 +1,8 @@
 FROM alpine:3.6
 
 RUN apk add --no-cache ca-certificates && \
-  addgroup -S certmanager && adduser -S -G certmanager certmanager
+  addgroup -S certmanager && adduser -S -G certmanager certmanager && \
+  mkdir -p /srv/execute_plugin_dir && chown -R certmanager: /srv/execute_plugin_dir
 
 ADD cert-manager-controller_linux_amd64 /usr/bin/cert-manager
 
